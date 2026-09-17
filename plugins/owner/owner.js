@@ -1,6 +1,6 @@
-const config = require('../../config');
+import config from '../../config.js';
 
-module.exports = {
+export default {
   command: ['owner', 'creator'],
   description: 'Show bot owner info',
   category: 'owner',
@@ -13,7 +13,7 @@ module.exports = {
       `> Contact owner for support / custom features`;
 
     try {
-      const { Button } = require('@vanzxy/baileys');
+      const { Button } = await import('@vanzxy/baileys');
       await new Button(sock)
         .setTitle('Owner')
         .setBody(text)

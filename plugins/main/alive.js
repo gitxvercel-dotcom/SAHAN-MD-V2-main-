@@ -1,7 +1,7 @@
-const config = require('../../config');
-const os = require('os');
+import config from '../../config.js';
+import os from 'os';
 
-module.exports = {
+export default {
   command: ['alive', 'ping'],
   description: 'Check if bot is online',
   category: 'main',
@@ -20,7 +20,7 @@ module.exports = {
       `*✅ Status:* Online`;
 
     try {
-      const { Button } = require('@vanzxy/baileys');
+      const { Button } = await import('@vanzxy/baileys');
       await new Button(sock)
         .setTitle('Bot Status')
         .setBody(text)

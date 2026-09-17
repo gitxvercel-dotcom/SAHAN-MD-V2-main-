@@ -1,12 +1,12 @@
-const config = require('../../config');
+import config from '../../config.js';
 
-module.exports = {
+export default {
   command: ['menu', 'help', 'list'],
   alias: ['m'],
   description: 'Show main menu with buttons',
   category: 'main',
 
-  async handler(sock, m, { prefix, commands, categories, args }) {
+  async handler(sock, m, { prefix, categories }) {
     const cats = Object.keys(categories || {}).sort();
     let menuText = `*┏━━━「 ${config.BOT_NAME} 」━━━┓*\n\n`;
     menuText += `*👋 Hello* ${m.pushName || 'User'}\n`;
@@ -26,9 +26,8 @@ module.exports = {
     menuText += `*┗━━━━━━━━━━━━━━━━┛*\n`;
     menuText += `> Powered by *SAHAN-MD V2*`;
 
-    // Try native Button from @vanzxy/baileys
     try {
-      const { Button } = require('@vanzxy/baileys');
+      const { Button } = await import('@vanzxy/baileys');
       await new Button(sock)
         .setTitle(`${config.BOT_NAME} MENU`)
         .setBody(menuText)
@@ -38,7 +37,6 @@ module.exports = {
         .addReply('🎵 Song', `${prefix}song`)
         .send(m.from);
     } catch (e) {
-      // Fallback text
       await m.reply(menuText);
     }
   }

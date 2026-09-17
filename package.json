@@ -3,7 +3,7 @@
   "version": "2.0.0",
   "description": "SAHAN-MD V2 - Premium WhatsApp MD Bot using @vanzxy/baileys + Plugin System",
   "main": "index.js",
-  "type": "commonjs",
+  "type": "module",
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js"

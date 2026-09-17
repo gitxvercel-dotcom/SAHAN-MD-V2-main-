@@ -1,17 +1,21 @@
-const {
+import {
   makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
   Browsers,
   delay
-} = require('@vanzxy/baileys');
-const pino = require('pino');
-const fs = require('fs-extra');
-const path = require('path');
-const chalk = require('chalk');
-const config = require('./config');
-const { loadPlugins } = require('./lib/pluginLoader');
-const { serialize } = require('./lib/serialize');
+} from '@vanzxy/baileys';
+import pino from 'pino';
+import fs from 'fs-extra';
+import path from 'path';
+import chalk from 'chalk';
+import { fileURLToPath } from 'url';
+import config from './config.js';
+import { loadPlugins } from './lib/pluginLoader.js';
+import { serialize } from './lib/serialize.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const logger = pino({ level: 'silent' });
 const sessionDir = path.join(__dirname, 'session');
@@ -23,7 +27,6 @@ let categories = {};
 async function startBot() {
   await fs.ensureDir(sessionDir);
 
-  // Load plugins
   console.log(chalk.cyan('\n[*] Loading plugins...'));
   const loaded = await loadPlugins(pluginsDir);
   commands = loaded.commands;
@@ -48,7 +51,6 @@ async function startBot() {
 
     if (qr) {
       console.log(chalk.yellow('[!] QR received. Prefer Pair Site for SESSION_ID.'));
-      // Optional: print with qrcode-terminal if installed
     }
 
     if (connection === 'open') {
@@ -61,7 +63,6 @@ async function startBot() {
 ╚════════════════════════════════════════╝
       `));
 
-      // Notify owner
       try {
         const ownerJid = config.OWNER_NUMBER.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
         await sock.sendMessage(ownerJid, { text: config.ALIVE_MSG });
@@ -81,7 +82,6 @@ async function startBot() {
     }
   });
 
-  // ========== MESSAGE HANDLER ==========
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     const raw = messages[0];
@@ -92,12 +92,10 @@ async function startBot() {
       const prefix = config.PREFIX;
       const body = m.body || '';
 
-      // Owner check
       const ownerNum = config.OWNER_NUMBER.replace(/[^0-9]/g, '');
       const senderNum = (m.sender || '').replace(/[^0-9]/g, '');
       m.isOwner = senderNum === ownerNum || senderNum.endsWith(ownerNum);
 
-      // Work type filter
       if (config.WORK_TYPE === 'private' && !m.isOwner) return;
       if (config.WORK_TYPE === 'group' && !m.isGroup) return;
 
@@ -110,7 +108,6 @@ async function startBot() {
       const plugin = commands.get(cmdName);
       if (!plugin) return;
 
-      // Permission checks
       if (plugin.ownerOnly && !m.isOwner) {
         return m.reply('⛔ Owner only command.');
       }
