@@ -1,25 +1,40 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, downloadContentFromMessage, jidNormalizedUser, proto } = require('@whiskeysockets/baileys');
+const {
+  makeWASocket,
+  useMultiFileAuthState,
+  DisconnectReason,
+  Browsers,
+  delay
+} = require('@vanzxy/baileys');
 const pino = require('pino');
 const fs = require('fs-extra');
 const path = require('path');
 const chalk = require('chalk');
 const config = require('./config');
+const { loadPlugins } = require('./lib/pluginLoader');
+const { serialize } = require('./lib/serialize');
 
 const logger = pino({ level: 'silent' });
 const sessionDir = path.join(__dirname, 'session');
+const pluginsDir = path.join(__dirname, 'plugins');
+
+let commands = new Map();
+let categories = {};
 
 async function startBot() {
   await fs.ensureDir(sessionDir);
 
-  // If SESSION_ID is provided, try to restore from it (simplified - in real use download from mega)
-  // For now we use multi-file auth. User can place creds.json manually or expand with mega download.
+  // Load plugins
+  console.log(chalk.cyan('\n[*] Loading plugins...'));
+  const loaded = await loadPlugins(pluginsDir);
+  commands = loaded.commands;
+  categories = loaded.categories;
+  console.log(chalk.cyan(`[*] ${commands.size} command(s) loaded\n`));
 
   const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
 
   const sock = makeWASocket({
     auth: state,
     logger,
-    printQRInTerminal: false,
     browser: Browsers.macOS('Chrome'),
     syncFullHistory: false,
     markOnlineOnConnect: true,
@@ -32,32 +47,36 @@ async function startBot() {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      console.log(chalk.yellow('[!] QR received - Use Pair Site instead for SESSION_ID'));
+      console.log(chalk.yellow('[!] QR received. Prefer Pair Site for SESSION_ID.'));
+      // Optional: print with qrcode-terminal if installed
     }
 
     if (connection === 'open') {
       console.log(chalk.green(`
-╔══════════════════════════════════════╗
-║     SAHAN-MD V2 CONNECTED ✅         ║
-║     Bot: ${config.BOT_NAME.padEnd(28)}║
-║     Prefix: ${config.PREFIX}                        ║
-╚══════════════════════════════════════╝
+╔════════════════════════════════════════╗
+║     SAHAN-MD V2 CONNECTED ✅           ║
+║     Baileys : @vanzxy/baileys          ║
+║     Prefix  : ${config.PREFIX}                       ║
+║     Plugins : ${String(commands.size).padEnd(26)}║
+╚════════════════════════════════════════╝
       `));
-      // Send alive to owner
+
+      // Notify owner
       try {
-        const ownerJid = config.OWNER_NUMBER + '@s.whatsapp.net';
+        const ownerJid = config.OWNER_NUMBER.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
         await sock.sendMessage(ownerJid, { text: config.ALIVE_MSG });
-      } catch (e) {}
+      } catch (_) {}
     }
 
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
       console.log(chalk.red(`[!] Connection closed. Code: ${code}`));
       if (code !== DisconnectReason.loggedOut) {
-        console.log(chalk.yellow('[*] Reconnecting...'));
-        setTimeout(startBot, 3000);
+        console.log(chalk.yellow('[*] Reconnecting in 3s...'));
+        await delay(3000);
+        startBot();
       } else {
-        console.log(chalk.red('[!] Logged out. Generate new SESSION_ID from Pair Site.'));
+        console.log(chalk.red('[!] Logged out. Generate new session from Pair Site.'));
       }
     }
   });
@@ -65,124 +84,64 @@ async function startBot() {
   // ========== MESSAGE HANDLER ==========
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
-    const m = messages[0];
-    if (!m.message || m.key.fromMe) return;
+    const raw = messages[0];
+    if (!raw?.message || raw.key.fromMe) return;
 
-    const from = m.key.remoteJid;
-    const isGroup = from.endsWith('@g.us');
-    const sender = isGroup ? (m.key.participant || m.participant) : from;
-    const body = getMessageBody(m);
-    const prefix = config.PREFIX;
-    const isCmd = body.startsWith(prefix);
-    const command = isCmd ? body.slice(prefix.length).trim().split(' ')[0].toLowerCase() : '';
-    const args = body.trim().split(/ +/).slice(1);
-    const text = args.join(' ');
-
-    // Simple command router
     try {
-      if (command === 'menu' || command === 'help') {
-        await sendButtonMenu(sock, from, m);
-      } else if (command === 'alive' || command === 'ping') {
-        await sock.sendMessage(from, {
-          text: `*🏓 Pong!*\n\n*Bot:* ${config.BOT_NAME}\n*Status:* Online ✅\n*Prefix:* ${prefix}`
-        }, { quoted: m });
-      } else if (command === 'owner') {
-        await sock.sendMessage(from, {
-          text: `*👑 Owner*\n\nName: ${config.OWNER_NAME}\nNumber: ${config.OWNER_NUMBER}`
-        }, { quoted: m });
-      } else if (command === 'buttons') {
-        // Demo interactive / buttons
-        await sendDemoButtons(sock, from, m);
+      const m = serialize(raw, sock);
+      const prefix = config.PREFIX;
+      const body = m.body || '';
+
+      // Owner check
+      const ownerNum = config.OWNER_NUMBER.replace(/[^0-9]/g, '');
+      const senderNum = (m.sender || '').replace(/[^0-9]/g, '');
+      m.isOwner = senderNum === ownerNum || senderNum.endsWith(ownerNum);
+
+      // Work type filter
+      if (config.WORK_TYPE === 'private' && !m.isOwner) return;
+      if (config.WORK_TYPE === 'group' && !m.isGroup) return;
+
+      if (!body.startsWith(prefix)) return;
+
+      const args = body.slice(prefix.length).trim().split(/ +/);
+      const cmdName = (args.shift() || '').toLowerCase();
+      const text = args.join(' ');
+
+      const plugin = commands.get(cmdName);
+      if (!plugin) return;
+
+      // Permission checks
+      if (plugin.ownerOnly && !m.isOwner) {
+        return m.reply('⛔ Owner only command.');
       }
+      if (plugin.groupOnly && !m.isGroup) {
+        return m.reply('⛔ Group only command.');
+      }
+      if (plugin.privateOnly && m.isGroup) {
+        return m.reply('⛔ Private chat only.');
+      }
+
+      const ctx = {
+        args,
+        text,
+        prefix,
+        commands,
+        categories,
+        config,
+        sock
+      };
+
+      await plugin.handler(sock, m, ctx);
     } catch (err) {
-      console.error('Command error:', err);
+      console.error(chalk.red('[Handler Error]'), err);
     }
   });
 
   return sock;
 }
 
-function getMessageBody(m) {
-  const msg = m.message;
-  if (msg.conversation) return msg.conversation;
-  if (msg.extendedTextMessage) return msg.extendedTextMessage.text;
-  if (msg.imageMessage?.caption) return msg.imageMessage.caption;
-  if (msg.videoMessage?.caption) return msg.videoMessage.caption;
-  if (msg.buttonsResponseMessage) return msg.buttonsResponseMessage.selectedButtonId;
-  if (msg.listResponseMessage) return msg.listResponseMessage.singleSelectReply?.selectedRowId;
-  if (msg.templateButtonReplyMessage) return msg.templateButtonReplyMessage.selectedId;
-  if (msg.interactiveResponseMessage) {
-    try {
-      const params = JSON.parse(msg.interactiveResponseMessage.nativeFlowResponseMessage?.paramsJson || '{}');
-      return params.id || params.selectedId || '';
-    } catch { return ''; }
-  }
-  return '';
-}
-
-// ========== BUTTON / INTERACTIVE SUPPORT ==========
-async function sendButtonMenu(sock, jid, quoted) {
-  const text = `*┏━━━「 ${config.BOT_NAME} 」━━━┓*
-
-*🤖 Premium Multi-Device Bot*
-*📌 Prefix:* ${config.PREFIX}
-
-*📋 Main Commands*
-• ${config.PREFIX}menu – This menu
-• ${config.PREFIX}alive – Bot status
-• ${config.PREFIX}owner – Owner info
-• ${config.PREFIX}buttons – Button demo
-
-*✨ Features*
-• Button Messages ✅
-• Interactive Messages ✅
-• Anti-Delete (configurable)
-• Auto Status View
-
-*┗━━━━━━━━━━━━━━━━┛*
-
-> Powered by SAHAN-MD V2`;
-
-  // Modern interactive style (works better on current Baileys)
-  try {
-    await sock.sendMessage(jid, {
-      text: text,
-      footer: 'SAHAN-MD V2 • Premium',
-      buttons: [
-        { buttonId: `${config.PREFIX}alive`, buttonText: { displayText: '🏓 Alive' }, type: 1 },
-        { buttonId: `${config.PREFIX}owner`, buttonText: { displayText: '👑 Owner' }, type: 1 },
-        { buttonId: `${config.PREFIX}buttons`, buttonText: { displayText: '✨ Buttons Demo' }, type: 1 }
-      ],
-      headerType: 1
-    }, { quoted });
-  } catch (e) {
-    // Fallback pure text
-    await sock.sendMessage(jid, { text }, { quoted });
-  }
-}
-
-async function sendDemoButtons(sock, jid, quoted) {
-  try {
-    await sock.sendMessage(jid, {
-      text: '*✨ Interactive Button Demo*\n\nChoose an option below:',
-      footer: 'SAHAN-MD V2 Button Support',
-      buttons: [
-        { buttonId: 'btn_yes', buttonText: { displayText: '✅ Yes' }, type: 1 },
-        { buttonId: 'btn_no', buttonText: { displayText: '❌ No' }, type: 1 },
-        { buttonId: 'btn_maybe', buttonText: { displayText: '🤔 Maybe' }, type: 1 }
-      ],
-      headerType: 1
-    }, { quoted });
-  } catch (e) {
-    await sock.sendMessage(jid, {
-      text: 'Button demo failed (Baileys version / WhatsApp restriction). Fallback text works.'
-    }, { quoted });
-  }
-}
-
-// Start
-console.log(chalk.cyan('Starting SAHAN-MD V2...'));
-startBot().catch(err => {
-  console.error('Fatal:', err);
+console.log(chalk.cyan('Starting SAHAN-MD V2 (@vanzxy/baileys)...'));
+startBot().catch((err) => {
+  console.error('Fatal error:', err);
   process.exit(1);
 });

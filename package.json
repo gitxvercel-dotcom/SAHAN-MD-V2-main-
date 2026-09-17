@@ -1,24 +1,25 @@
 {
   "name": "sahan-md-v2",
   "version": "2.0.0",
-  "description": "SAHAN-MD V2 - Premium WhatsApp Multi-Device Bot with Button Support",
+  "description": "SAHAN-MD V2 - Premium WhatsApp MD Bot using @vanzxy/baileys + Plugin System",
   "main": "index.js",
+  "type": "commonjs",
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.18",
+    "@vanzxy/baileys": "^2.0.3",
     "pino": "^9.4.0",
     "fs-extra": "^11.2.0",
     "moment-timezone": "^0.5.45",
     "axios": "^1.7.7",
-    "node-cache": "^5.1.2",
     "chalk": "^4.1.2",
     "file-type": "^16.5.4",
-    "jimp": "^0.16.13"
+    "jimp": "^0.16.13",
+    "node-fetch": "^2.7.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   }
 }
